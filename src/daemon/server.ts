@@ -109,7 +109,18 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
 
   const releaseLock = acquireLock(lockFile)
 
-  const server = createServer((conn) => handleConnection(conn, options.session, socket))
+  /**
+   * Live client sockets.
+   *
+   * Tracked so shutdown can destroy them; `net.Server` exposes no closeAllConnections.
+   */
+  const connections = new Set<Socket>()
+
+  const server = createServer((conn) => {
+    connections.add(conn)
+    conn.on('close', () => connections.delete(conn))
+    handleConnection(conn, options.session, socket)
+  })
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
@@ -127,6 +138,14 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonHa
   closed = new Promise<void>((resolve) => server.once('close', () => resolve()))
 
   const stop = async (): Promise<void> => {
+    // server.close() only stops accepting, then waits for every existing connection to
+    // end — so one lingering client hangs shutdown indefinitely, which surfaces as
+    // `vaultbroker daemon stop` never returning. `closeAllConnections()` is an
+    // http.Server method and does NOT exist on net.Server, so sockets are tracked
+    // explicitly and destroyed here.
+    for (const conn of connections) conn.destroy()
+    connections.clear()
+
     await new Promise<void>((resolve) => {
       server.close(() => resolve())
     })

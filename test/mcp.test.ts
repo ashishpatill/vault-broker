@@ -16,7 +16,7 @@
 
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, rmSync, statSync } from 'node:fs'
-import { createServer, Server as NetServer } from 'node:net'
+import { connect, createServer, Server as NetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, afterEach, before, beforeEach, describe, test } from 'node:test'
@@ -289,6 +289,33 @@ describe('single instance', () => {
     })
     await handle2.stop()
     other.dispose()
+  })
+
+  test('shutdown completes even with a client connection still open', async () => {
+    // Regression guard for a real hang: server.close() only stops accepting and then waits
+    // for every existing connection to end, so one lingering socket blocked shutdown
+    // forever — `vaultbroker daemon stop` never returned. net.Server has no
+    // closeAllConnections (that is http.Server), so sockets are tracked and destroyed.
+    const probeVault = throwawayVault('shutdown')
+    const probeDaemon = await startDaemon({
+      session: new Session(probeVault),
+      socket: join(root, 'shutdown.sock'),
+      lockFile: join(root, 'shutdown.lock'),
+    })
+
+    // Open a connection and deliberately never send anything on it.
+    const linger = connect(probeDaemon.socket)
+    await new Promise<void>((resolve) => linger.on('connect', () => resolve()))
+
+    // Would hang here without the fix; bounded so a regression fails rather than hangs.
+    const stopped = await Promise.race([
+      probeDaemon.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) => setTimeout(() => resolve('TIMED OUT'), 5000)),
+    ])
+
+    assert.equal(stopped, 'stopped', 'daemon shutdown must not wait on idle connections')
+    linger.destroy()
+    probeVault.dispose()
   })
 
   test('a stale socket file from a crashed daemon is replaced, not fatal', async () => {
