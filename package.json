@@ -1,0 +1,32 @@
+{
+  "name": "vaultbroker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "macOS-native credential broker: AI harnesses request actions, never credentials.",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "bin": {
+    "vaultbroker": "./bin/vaultbroker.mjs"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test 'test/**/*.test.ts'",
+    "check": "npm run typecheck && npm run test",
+    "test:vault": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test 'test/**/*.test.ts'",
+    "test:mcp": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test 'test/mcp.test.ts'",
+    "shim": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/shim/main.ts",
+    "daemon": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/daemon/main.ts",
+    "test:policy": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test 'test/policy.test.ts'",
+    "test:identity": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test 'test/identity.test.ts'",
+    "test:adapter": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test 'test/adapter.test.ts'"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1"
+  }
+}

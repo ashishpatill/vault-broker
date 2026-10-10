@@ -1,0 +1,17 @@
+node_modules/
+*.log
+
+# Never commit runtime state if someone points VAULTBROKER_HOME at the repo
+.vaultbroker/
+vault.json
+state.json
+audit.log
+broker.sock
+daemon.lock
+
+# Credentials must never reach git, even in a test fixture.
+*.pem
+*.key
+.env
+.env.*
+!/.env.example
