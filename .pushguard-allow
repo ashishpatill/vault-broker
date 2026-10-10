@@ -1,0 +1,26 @@
+# Synthetic credential strings — attested as non-secret
+#
+# The pre-push guard blocks credential-shaped strings. This repository's test suite must
+# contain such strings in order to test that redaction works, so each one is listed here
+# explicitly rather than blanket-excepting the test directory — a blanket exception would
+# let a real secret hide in exactly the place most likely to be skimmed.
+#
+# Every value below is fake. They are either the documentation examples from the respective
+# providers (AWS's own AKIAIOSFODNN7EXAMPLE) or obviously-sequential canaries invented for
+# these tests. None has ever authenticated anything.
+#
+# Adding a line here is a claim that the string is synthetic. Review it the same way you
+# would review the code introducing it.
+
+# AWS's documented example key id, used by every SDK's own docs.
+AKIAIOSFODNN7EXAMPLE
+ASIAIOSFODNN7EXAMPLE
+
+# Canary in test/adapter.test.ts — the stand-in for a real credential in adapter tests.
+ghp_TESTTOKENabcdefghijklmnopqrstuvwxyz0123
+
+# Canary in test/mcp.test.ts — asserts the logger's redaction actually fires.
+ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345
+
+# Slack-shaped canary in test/adapter.test.ts, exercising the response scanner.
+xoxb-1234567890-abcdefghij
