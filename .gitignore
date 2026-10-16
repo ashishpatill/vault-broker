@@ -15,3 +15,6 @@ daemon.lock
 .env
 .env.*
 !/.env.example
+# Archify scratch output. The published copy lives in docs/ and IS tracked; only the
+# generator's working folder and its evidence sidecars are ignored.
+.archify/

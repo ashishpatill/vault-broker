@@ -11,6 +11,27 @@ and [iterations/MASTER-PLAN.md](iterations/MASTER-PLAN.md) for the design.
 
 ---
 
+## How it fits together
+
+![VaultBroker architecture and trust boundaries](docs/architecture.png)
+
+<sub>
+Interactive version — hover a node for its sources, use <b>PATH</b> to highlight a route,
+and <b>Export</b> for SVG/PNG: [docs/architecture.html](docs/architecture.html)
+</sub>
+
+The top row is the request path: a harness speaks MCP over stdio to a shim that holds no
+secrets, the shim asks a single daemon, and only an adapter that already passed policy ever
+reaches a provider. The middle row is what the daemon consults *before* acting — client
+registry, policy engine, vault. The bottom row is where authority comes from: your
+approval, the audit chain, and the Keychain holding the master key.
+
+Two boundaries carry real isolation. The `0700 runtime directory` wraps only what actually
+lives on disk. `api.github.com` sits **outside** the user session entirely — which is the
+point of a broker: the credential crosses that line, the model never does.
+
+---
+
 ## The invariant
 
 > The model may request an authorized action, but it never receives the credential that
