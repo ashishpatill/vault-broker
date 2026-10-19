@@ -23,6 +23,7 @@ import type { AccountSummary, DaemonStatus } from '../daemon/session.ts'
 export const TOOL_NAMES = {
   listAccounts: 'list_accounts',
   brokerStatus: 'broker_status',
+  callApi: 'call_api',
 } as const
 
 export type ToolName = (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES]
@@ -66,6 +67,27 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_NAMES.callApi,
+    description:
+      'Perform one allowlisted operation against a provider API on behalf of an account ' +
+      'held by the broker. The credential is spent by the broker and never appears in the ' +
+      'arguments or the result. Requires a capability id from the user, and fails closed ' +
+      'unless policy allows it. Returns a projection of the provider response, never the ' +
+      'credential. NOT for fetching secrets: there is no tool here that discloses one.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        service: { type: 'string', description: 'Service name, e.g. github' },
+        account: { type: 'string', description: 'Account alias, e.g. work' },
+        operation: { type: 'string', description: 'Allowlisted operation, e.g. github.repo.read' },
+        capability_id: { type: 'string', description: 'Capability id minted by the user via vaultbroker policy grant' },
+        project: { type: 'string', description: 'Project directory the grant is bound to; defaults to the current directory' },
+        params: { type: 'object', description: 'Operation parameters, e.g. owner/repo/number' },
+      },
       additionalProperties: false,
     },
   },

@@ -14,6 +14,8 @@
 
 import { statSync } from 'node:fs'
 
+import { createGitHubAdapter } from '../adapters/github.ts'
+import { AdapterError, AdapterRegistry } from '../adapters/registry.ts'
 import { AuditLog } from '../core/audit.ts'
 import type { KeychainStore } from '../core/keychain.ts'
 import { createLogger } from '../core/logging.ts'
@@ -31,6 +33,7 @@ export type DaemonErrorCode =
   | 'UNKNOWN_COMMAND'
   | 'UNSUPPORTED_VERSION'
   | 'VAULT_ERROR'
+  | 'UPSTREAM_ERROR'
   | 'INTERNAL'
 
 export class DaemonError extends Error {
@@ -108,16 +111,24 @@ export class Session {
   #vault: Vault
   #signature: string
   readonly #policy: PolicyEngine
+  readonly #adapters: AdapterRegistry
 
   constructor(
     vault: Vault,
-    options: { reload?: ReloadSource; now?: Date; audit?: AuditLog; policy?: PolicyEngine } = {},
+    options: {
+      reload?: ReloadSource
+      now?: Date
+      audit?: AuditLog
+      policy?: PolicyEngine
+      adapters?: AdapterRegistry
+    } = {},
   ) {
     this.#vault = vault
     this.#reload = options.reload
     this.startedAt = options.now ?? new Date()
     this.#signature = this.#currentSignature()
     this.#policy = options.policy ?? new PolicyEngine({ audit: options.audit ?? new AuditLog() })
+    this.#adapters = options.adapters ?? defaultAdapters()
   }
 
   /** The policy engine. Exposed for the CLI and tests; requests still go through here. */
@@ -245,6 +256,64 @@ export class Session {
         case 'audit_recent':
           return respond(this.#policy.audit.recent(readNumber(frame, 'count', 20)))
 
+        case 'call_api': {
+          // Order is deliberate: authorise against policy, resolve the adapter, and only
+          // then open the vault and touch the credential. A denied request must never
+          // reach decryption, and an unknown operation must never reach the keychain.
+          const service = readString(frame, 'service')
+          const accountAlias = readString(frame, 'accountAlias')
+          const operation = readString(frame, 'operation') as Operation
+          const capabilityId = readString(frame, 'capabilityId')
+          const projectPath = readString(frame, 'projectPath')
+          const params = readParams(frame)
+
+          const verdict = this.#policy.authorise({
+            clientId: frame.clientId,
+            capabilityId,
+            service,
+            accountAlias,
+            operation,
+            projectPath,
+          })
+          if (!verdict.allowed) {
+            const { reason, message, auditEventId } = verdict
+            return respond({ allowed: false, reason, message, auditEventId })
+          }
+
+          let adapter: ReturnType<AdapterRegistry['resolve']>
+          try {
+            adapter = this.#adapters.resolve(service, operation)
+          } catch (error) {
+            if (error instanceof AdapterError) {
+              return fail('BAD_REQUEST', error.message)
+            }
+            throw error
+          }
+
+          let secret
+          try {
+            secret = this.#vault.getSecret(service, accountAlias)
+          } catch {
+            return fail('VAULT_ERROR', 'no such account in the vault')
+          }
+
+          // Disposal is unconditional: whether the provider call succeeds, fails or is
+          // aborted, the decrypted bytes are wiped before this handler returns.
+          try {
+            const result = await adapter.execute({ operation, params }, secret)
+            return respond({ allowed: true, result })
+          } catch (error) {
+            if (error instanceof AdapterError) {
+              log.warn('provider call failed', { service, operation, kind: error.kind })
+              return fail('UPSTREAM_ERROR', error.message)
+            }
+            log.warn('provider call failed unexpectedly', { service, operation, error })
+            return fail('UPSTREAM_ERROR', 'the provider call could not be completed')
+          } finally {
+            secret.dispose()
+          }
+        }
+
         case 'shutdown':
           return respond({ stopping: true })
 
@@ -298,6 +367,35 @@ function readOperations(frame: RequestFrame): Operation[] {
   }
   // Elements are validated by the policy engine, which rejects unknown operations.
   return value as Operation[]
+}
+
+/**
+ * Free-form parameters for a provider call.
+ *
+ * Passed through to the adapter untouched. Validation is the adapter's job — each one
+ * knows which parameters its operations need and what may change their meaning. The
+ * daemon only refuses non-objects, because a list or a string here is always a framing
+ * error, never a legitimate request.
+ */
+function readParams(frame: RequestFrame): Readonly<Record<string, unknown>> {
+  const value = frame.params['params']
+  if (value === undefined) return {}
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new DaemonError('BAD_REQUEST', 'params must be an object')
+  }
+  return value as Readonly<Record<string, unknown>>
+}
+
+/**
+ * Adapters for the services this build brokers, beside the daemon that spins them up.
+ *
+ * Explicit rather than inline in the constructor so the registry is one visible value and
+ * tests can replace the whole thing.
+ */
+function defaultAdapters(): AdapterRegistry {
+  const registry = new AdapterRegistry()
+  registry.register(createGitHubAdapter())
+  return registry
 }
 
 /** Open the daemon's vault. Exposed so the server and tests share one construction path. */

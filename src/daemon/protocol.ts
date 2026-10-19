@@ -34,6 +34,7 @@ export type DaemonCommand =
   | 'list_accounts'
   | 'grant'
   | 'authorise'
+  | 'call_api'
   | 'audit_recent'
   | 'shutdown'
 

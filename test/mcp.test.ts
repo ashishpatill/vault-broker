@@ -347,7 +347,7 @@ describe('MCP tool surface', () => {
     const { tools } = await client.listTools()
 
     const names = tools.map((t) => t.name).sort()
-    assert.deepEqual(names, [TOOL_NAMES.brokerStatus, TOOL_NAMES.listAccounts].sort())
+    assert.deepEqual(names, [TOOL_NAMES.brokerStatus, TOOL_NAMES.callApi, TOOL_NAMES.listAccounts].sort())
 
     // The forbidden set, asserted rather than assumed. A tool that returns a credential
     // is the single failure mode this product must never ship.
@@ -370,14 +370,33 @@ describe('MCP tool surface', () => {
     }
   })
 
-  test('no tool schema accepts arguments that could carry a credential', () => {
+  test('meta tools take no arguments; call_api is bounded, never free-form', () => {
     for (const tool of TOOL_DEFINITIONS) {
+      assert.equal(tool.inputSchema.additionalProperties, false, `${tool.name} must reject extra keys`)
+      if (tool.name === TOOL_NAMES.callApi) continue
       assert.deepEqual(
         Object.keys(tool.inputSchema.properties),
         [],
         `${tool.name} should take no arguments; free-form input is a disclosure risk`,
       )
-      assert.equal(tool.inputSchema.additionalProperties, false)
+    }
+
+    // call_api is the one tool that takes arguments, and its surface is deliberately
+    // narrow: identities and a capability id, never a credential value. A property that
+    // accepted a secret would turn the tool into the disclosure path it exists to close.
+    const callApi = TOOL_DEFINITIONS.find((tool) => tool.name === TOOL_NAMES.callApi)
+    assert.notEqual(callApi, undefined)
+    const keys = Object.keys(callApi?.inputSchema.properties ?? {}).sort()
+    assert.deepEqual(keys, ['account', 'capability_id', 'operation', 'params', 'project', 'service'])
+
+    const bannedArgNames = ['secret', 'token', 'password', 'credential', 'value', 'key']
+    for (const key of keys) {
+      for (const banned of bannedArgNames) {
+        assert.ok(
+          !key.toLowerCase().includes(banned),
+          `call_api argument ${key} must not be named for credential material (${banned})`,
+        )
+      }
     }
   })
 

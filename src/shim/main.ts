@@ -119,7 +119,19 @@ export async function daemonRequest(
 const TOOL_COMMANDS: Readonly<Record<ToolName, Parameters<typeof buildRequest>[1]>> = {
   [TOOL_NAMES.listAccounts]: 'list_accounts',
   [TOOL_NAMES.brokerStatus]: 'status',
+  [TOOL_NAMES.callApi]: 'call_api',
 }
+
+/**
+ * Typed nullable access on a value the SDK gives us as `unknown`, without `any`.
+ *
+ * The daemon validates every field again — this only keeps the handler from crashing on a
+ * malformed `arguments` value.
+ */
+const arg = (args: unknown, name: string): unknown =>
+  args !== null && typeof args === 'object' && !Array.isArray(args)
+    ? (args as Record<string, unknown>)[name]
+    : undefined
 
 /**
  * Build the MCP server that fronts the daemon.
@@ -153,7 +165,24 @@ export function createShimServer(clientId: ClientId, socket?: string): Server {
     }
 
     try {
-      const result = await daemonRequest(clientId, command, {}, { socket })
+      // Meta tools take no arguments. `call_api` forwards the harness's arguments to the
+      // daemon, which validates every field before it acts on any of them — the shim does
+      // not inspect, log or transform a single value in between.
+      const rawArgs = request.params.arguments
+      const params: Record<string, unknown> =
+        command === 'call_api'
+          ? {
+              service: arg(rawArgs, 'service'),
+              // The tool speaks `account` to a model; the daemon speaks `accountAlias`.
+              accountAlias: arg(rawArgs, 'account'),
+              operation: arg(rawArgs, 'operation'),
+              capabilityId: arg(rawArgs, 'capability_id'),
+              projectPath: arg(rawArgs, 'project') ?? process.cwd(),
+              params: arg(rawArgs, 'params') ?? {},
+            }
+          : {}
+
+      const result = await daemonRequest(clientId, command, params, { socket })
 
       // The daemon's result is returned as-is. There is no credential in it by
       // construction: `list_accounts` returns an explicit field list, never a spread.
