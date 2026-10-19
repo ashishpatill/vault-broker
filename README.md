@@ -3,10 +3,13 @@
 A local credential broker for AI coding harnesses. Harnesses ask the broker to *do*
 something with an account; they never receive the credential that authorises it.
 
-**Status: iteration I5 — adapter framework and GitHub.** Provider calls are brokered with
-fixed operations, fixed hosts and allowlisted response fields, with a fail-closed scan on
-every response body. Nothing is installed into a real harness yet — that is I7.
-See [iterations/PLAN.md](iterations/PLAN.md) for the roadmap
+**Status: v0.1 complete.** Provider calls are brokered end to end (`call_api`), plaintext
+tokens can be imported and their config homes rewritten behind verified backups, and the
+broker installs into Cursor, Claude Code, OpenCode and Codex. The conformance suite
+drives all four harness identities with hostile input — including a real shim process
+over stdio with byte-level capture — and fails on any credential-shaped byte in any
+response, log, config or audit record.
+See [iterations/PLAN.md](iterations/PLAN.md) for the iteration records
 and [iterations/MASTER-PLAN.md](iterations/MASTER-PLAN.md) for the design.
 
 ---
@@ -58,7 +61,7 @@ Stated up front, because a security product that oversells is worse than none:
 | Threat | Status |
 |---|---|
 | Credential reaching model context via tool output | **Prevented** by design + tested |
-| Credential sitting in a harness config file | **Prevented** (arrives with iteration I7) |
+| Credential sitting in a harness config file | **Prevented** — `import` + `config migrate`, verified backup, `rollback` re-verifies the digest |
 | A malicious *other* MCP server reading the vault | **Prevented** — adapters are allowlisted, no generic exec |
 | Man-in-the-middle between broker and harness | **Structurally avoided** — Unix domain socket in a `0700` directory, no TCP listener |
 | Compromised harness **misusing a permission you granted** | **Not prevented.** We narrow scope, shorten TTLs, require fresh approval for sensitive operations and make it attributable. That is all. |
@@ -84,7 +87,7 @@ Stated up front, because a security product that oversells is worse than none:
 - **Not in v0 at all:** Secure Enclave device identity, Touch ID approval, biometric
   keychain ACLs, code signing, notarisation, sandboxed adapters, App Attest.
 
-## Storage model (v0.1)
+## Storage model
 
 ```
 KEK  32 random bytes in the macOS Keychain (service vaultbroker:kek, account vault:v1)
@@ -112,7 +115,7 @@ Consequences worth knowing:
 Known limitation: `security` cannot set a biometry ACL, so unlock is gated on the login
 Keychain password rather than Touch ID. The native helper in v0.2 replaces this.
 
-## Process architecture (v0.2)
+## Process architecture
 
 ```
 Cursor ──┐                    ┌──────────────────────────────┐
@@ -151,16 +154,21 @@ credentials in either     → none
 
 ### Tool surface
 
-Two tools, both metadata-only:
+Three tools:
 
 - `list_accounts` — service, account alias, type, timestamps. No secret values.
 - `broker_status` — daemon state and connected clients.
+- `call_api` — performs one allowlisted operation against a provider. Takes a capability
+  id the *user* minted (`vaultbroker policy grant`); validates every field at the daemon;
+  spends the credential on the outbound request and returns a projection of the response
+  under an explicit field allowlist with a fail-closed scan. The tool's description states
+  the credential is never returned, because a model that believes otherwise will look for
+  a workaround.
 
 The forbidden set (`get_secret`, `export`, `copy_to_clipboard`, `run_shell`) is asserted
-by name in the test suite rather than left to review discipline, and no tool accepts any
-arguments — free-form input is a disclosure risk. `list_accounts` builds its response from
-an explicit field list rather than a spread, so a field added to `VaultEntry` later cannot
-leak into a response by accident.
+by name in the test suite rather than left to review discipline. The metadata tools take
+no arguments; `call_api`'s argument surface is a closed schema — `additionalProperties:
+false` and no property named for credential material — asserted by test.
 
 ### What the socket does not yet prove
 
@@ -169,7 +177,7 @@ signature; definitive kernel peer-credential checks (`LOCAL_PEERCRED`) need a na
 and land in v0.2. `peerCredentials()` in `src/daemon/server.ts` is the seam where that
 check goes, and it currently returns `undefined` honestly rather than pretending.
 
-## Adapters (v0.5)
+## Adapters
 
 An adapter is the only component allowed to spend a credential on a provider call, and it
 is constrained on four axes:
@@ -223,7 +231,7 @@ test exists but is **skipped**, because there is no GitHub token on this machine
 against a stub that behaves like the API" and "verified against the real API" are different
 claims, and only the first one is true today.
 
-## Client identity binding (v0.4)
+## Client identity binding
 
 A grant is bound to **what a harness's binary actually is**, not to a path string. A
 writable path can be repointed at a different executable, so path checks catch nothing.
@@ -284,7 +292,7 @@ compared against registration rather than required absolutely — the real Claud
 Developer ID signed but not stapled, and a rule that blocks a legitimate harness is a rule
 that eventually gets disabled.
 
-## Policy model (v0.3)
+## Policy model
 
 Every request goes through `PolicyEngine.authorise`. There is no second path — no tool
 handler that checks its own scope, no adapter that trusts its caller. A policy engine
@@ -366,6 +374,55 @@ vaultbroker secret remove --service github --account work
 `--value` is deliberately **not** supported. Credentials are accepted only via
 `--from-file` or `--from-stdin`, because argv is visible in `ps` and persists in shell
 history.
+
+### Taking a token out of a config file
+
+The point of the product, in three steps, with a real-world example:
+
+```bash
+# 1. Move the token into the vault. Output is metadata only — never the value.
+vaultbroker import --from-config --service neon --account work
+
+# 2. Rewrite the config so it stops carrying the token.
+#    Without --yes this is a dry run showing the exact change. Applying snapshots the
+#    original with a hash receipt and verifies the snapshot before using it.
+vaultbroker config migrate --client cursor          # dry run
+vaultbroker config migrate --client cursor --yes    # apply
+vaultbroker config rollback --client cursor         # restores byte-for-byte
+
+# 3. Check nothing is left lying around, anywhere.
+vaultbroker status
+```
+
+The migration refuses to guess: if a config's env block carries two credential-shaped
+values, it stops and says so instead of picking one.
+
+### Installing the broker into a harness
+
+```bash
+vaultbroker install cursor          # file-edited through a verified backup
+vaultbroker install claude-code     # via `claude mcp add -s user`
+vaultbroker install opencode        # via `opencode mcp add --global`
+vaultbroker install codex           # via `codex mcp add`
+```
+
+The installed entry is an absolute `node` path plus the launcher and a client id — no
+env block, no credential surface. Re-install is idempotent. `vaultbroker uninstall
+<client> --yes` reverses it.
+
+### Brokering one call
+
+The harness asks; every decision remains yours:
+
+```bash
+# Mint a single-use capability for one client, bound to one project:
+vaultbroker policy grant --client cursor --service neon --account work \
+  --operations neon.project.list --project /path/to/repo --ttl 15
+```
+
+The harness then calls `call_api` with that capability id. After the call the capability
+is spent — a replay of the same id is denied and audited (`nonce-replayed`), asserted by
+the conformance suite.
 
 ## Manual verification
 

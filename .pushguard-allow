@@ -19,6 +19,13 @@ ASIAIOSFODNN7EXAMPLE
 # Canary in test/adapter.test.ts — the stand-in for a real credential in adapter tests.
 ghp_TESTTOKENabcdefghijklmnopqrstuvwxyz0123
 
+# Neon-shaped canaries in test/neon.test.ts, test/config.test.ts and
+# test/conformance.test.ts — same contract as the GitHub canary above: synthetic bodies
+# developed for these suites only, kept provider-prefixed so the response scanners and
+# configuration sweeps have something to catch. Never authenticated against anything.
+napi_TESTTOKENabcdefghijklmnopqrstuvwxyz0123
+napi_TESTFIXTUREabcdef0123456789ghij
+
 # Canary in test/mcp.test.ts — asserts the logger's redaction actually fires.
 ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345
 
