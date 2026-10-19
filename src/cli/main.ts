@@ -11,6 +11,7 @@ import { runInit, printInit } from './commands/init.ts'
 import { runPolicy } from './commands/policy.ts'
 import { runClient } from './commands/client.ts'
 import { CliError, runSecret, type CommandResult } from './commands/secret.ts'
+import { runImport, runConfigMigration, runConfigRollback } from './commands/config.ts'
 import { AuditLog } from '../core/audit.ts'
 import { PolicyEngine } from '../core/policy.ts'
 import { auditLogPath } from '../core/runtime-paths.ts'
@@ -37,6 +38,11 @@ Usage:
   vaultbroker client list                Show registered clients
   vaultbroker client verify             Re-verify one client's identity now
   vaultbroker client unregister         Remove a client and revoke its grants
+
+Token migration:
+  vaultbroker import --from-config      Move a plaintext token into the vault
+  vaultbroker config migrate            Rewrite a config to stop carrying the token
+  vaultbroker config rollback           Restore the pre-migration config byte-for-byte
 
 Credential input (never argv — argv is visible in \`ps\` and shell history):
   --from-file <path>   Read the credential from a file
@@ -66,7 +72,7 @@ Examples:
   vaultbroker policy approve --client cursor --service github --account work \\
     --project ~/src/acme --operation github.release.create
 
-Status: iteration I3 (policy and audit). Provider adapters land in I5.
+Status: v0.1 — call_api brokered end to end; installer lands with I7.
 `
 
 async function main(argv: string[]): Promise<number> {
@@ -105,6 +111,30 @@ async function main(argv: string[]): Promise<number> {
       const registry = ClientRegistry.load({ policy })
 
       const result = runClient(rest, { registry })
+      const stream = result.exitCode === 0 ? process.stdout : process.stderr
+      stream.write(result.output)
+      return result.exitCode
+    }
+
+    case 'import': {
+      const result: CommandResult = runImport(rest)
+      const stream = result.exitCode === 0 ? process.stdout : process.stderr
+      stream.write(result.output)
+      return result.exitCode
+    }
+
+    case 'config': {
+      // `config migrate` and `config rollback` share one dispatcher: argv[0] selects.
+      const [subcommand, ...sub] = rest
+      const result: CommandResult =
+        subcommand === 'migrate'
+          ? runConfigMigration(sub)
+          : subcommand === 'rollback'
+            ? runConfigRollback(sub)
+            : {
+                exitCode: 2,
+                output: `unknown config command: ${String(subcommand)} (use migrate or rollback)\n`,
+              }
       const stream = result.exitCode === 0 ? process.stdout : process.stderr
       stream.write(result.output)
       return result.exitCode
