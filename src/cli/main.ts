@@ -10,8 +10,10 @@
 import { runInit, printInit } from './commands/init.ts'
 import { runPolicy } from './commands/policy.ts'
 import { runClient } from './commands/client.ts'
-import { CliError, runSecret, type CommandResult } from './commands/secret.ts'
+import { CliError, parseArgs, runSecret, type CommandResult } from './commands/secret.ts'
 import { runImport, runConfigMigration, runConfigRollback } from './commands/config.ts'
+import { InstallError, applyInstall, applyUninstall, planInstall, renderPlan } from '../install/install.ts'
+import type { KnownClient } from '../install/detect.ts'
 import { AuditLog } from '../core/audit.ts'
 import { PolicyEngine } from '../core/policy.ts'
 import { auditLogPath } from '../core/runtime-paths.ts'
@@ -43,6 +45,12 @@ Token migration:
   vaultbroker import --from-config      Move a plaintext token into the vault
   vaultbroker config migrate            Rewrite a config to stop carrying the token
   vaultbroker config rollback           Restore the pre-migration config byte-for-byte
+
+Harness installation:
+  vaultbroker install <client>          Show the proposed change (add --yes to apply)
+  vaultbroker uninstall <client>        Remove the broker entry from a harness
+  vaultbroker status                    One honest control panel
+  (clients: cursor | claude-code | opencode | codex -- never touched without --yes)
 
 Credential input (never argv — argv is visible in \`ps\` and shell history):
   --from-file <path>   Read the credential from a file
@@ -138,6 +146,52 @@ async function main(argv: string[]): Promise<number> {
       const stream = result.exitCode === 0 ? process.stdout : process.stderr
       stream.write(result.output)
       return result.exitCode
+    }
+
+    case 'install':
+    case 'uninstall': {
+      const parsedInstall = parseArgs(rest)
+      const client = parsedInstall.positional[0]
+      const known = ['cursor', 'claude-code', 'opencode', 'codex']
+      if (client === undefined || !known.includes(client)) {
+        process.stderr.write(`install needs a client: ${known.join(' | ')}\n`)
+        return 2
+      }
+      const confirmation = parsedInstall.flags.get('yes') === true
+      if (!confirmation) {
+        // Dry run is the default. A write is opt-in, never opt-out.
+        const plan = planInstall(client as KnownClient)
+        process.stdout.write(renderPlan(plan) + 'add --yes to apply\n')
+        return 0
+      }
+      try {
+        const result =
+          command === 'install'
+            ? applyInstall(client as KnownClient)
+            : applyUninstall(client as KnownClient)
+        process.stdout.write(result.summary)
+        return result.changed ? 0 : 0
+      } catch (err) {
+        if (err instanceof InstallError) {
+          process.stderr.write(`vaultbroker: ${err.message}\n`)
+          return 1
+        }
+        throw err
+      }
+    }
+
+    case 'mcp': {
+      // The entry harnesses run: `vaultbroker mcp <client>`. Delegates to the shim whose
+      // stdio belongs to the MCP transport from here on.
+      const clientId = rest[0]
+      const allowed = ['cursor', 'claude-code', 'opencode', 'codex', 'test']
+      if (clientId === undefined || !allowed.includes(clientId)) {
+        process.stderr.write('mcp needs a client id: cursor | claude-code | opencode | codex\n')
+        return 2
+      }
+      const { main: runShim } = await import('../shim/main.ts')
+      await runShim([clientId])
+      return 0
     }
 
     case 'help':
