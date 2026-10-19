@@ -12,6 +12,7 @@ import { runPolicy } from './commands/policy.ts'
 import { runClient } from './commands/client.ts'
 import { CliError, parseArgs, runSecret, type CommandResult } from './commands/secret.ts'
 import { runImport, runConfigMigration, runConfigRollback } from './commands/config.ts'
+import { runStatus } from './commands/status.ts'
 import { InstallError, applyInstall, applyUninstall, planInstall, renderPlan } from '../install/install.ts'
 import type { KnownClient } from '../install/detect.ts'
 import { AuditLog } from '../core/audit.ts'
@@ -80,7 +81,7 @@ Examples:
   vaultbroker policy approve --client cursor --service github --account work \\
     --project ~/src/acme --operation github.release.create
 
-Status: v0.1 — call_api brokered end to end; installer lands with I7.
+Status: v0.1 — import, migrate, install, call_api, status. See README for the flow.
 `
 
 async function main(argv: string[]): Promise<number> {
@@ -143,6 +144,13 @@ async function main(argv: string[]): Promise<number> {
                 exitCode: 2,
                 output: `unknown config command: ${String(subcommand)} (use migrate or rollback)\n`,
               }
+      const stream = result.exitCode === 0 ? process.stdout : process.stderr
+      stream.write(result.output)
+      return result.exitCode
+    }
+
+    case 'status': {
+      const result: CommandResult = runStatus(rest)
       const stream = result.exitCode === 0 ? process.stdout : process.stderr
       stream.write(result.output)
       return result.exitCode
