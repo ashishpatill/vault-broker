@@ -15,6 +15,7 @@
 import { statSync } from 'node:fs'
 
 import { createGitHubAdapter } from '../adapters/github.ts'
+import { createNeonAdapter } from '../adapters/neon.ts'
 import { AdapterError, AdapterRegistry } from '../adapters/registry.ts'
 import { AuditLog } from '../core/audit.ts'
 import type { KeychainStore } from '../core/keychain.ts'
@@ -395,6 +396,7 @@ function readParams(frame: RequestFrame): Readonly<Record<string, unknown>> {
 function defaultAdapters(): AdapterRegistry {
   const registry = new AdapterRegistry()
   registry.register(createGitHubAdapter())
+  registry.register(createNeonAdapter())
   return registry
 }
 

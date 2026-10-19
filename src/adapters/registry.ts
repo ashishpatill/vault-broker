@@ -289,6 +289,10 @@ export async function callApi(
     readonly body?: unknown
     readonly responseFields?: readonly string[]
     readonly responseIsList?: boolean
+    /** Dotted path to the array when the upstream wraps its list in an object. */
+    readonly listPath?: string
+    /** Provider-specific header tuning; the default caller gets GitHub's legacy headers. */
+    readonly headers?: (headers: Headers) => void
     readonly signal?: AbortSignal | undefined
   },
   secret: Secret,
@@ -297,9 +301,16 @@ export async function callApi(
   const method = spec.method ?? 'GET'
 
   const raw = await secret.withHeaders(async (headers): Promise<string> => {
-    headers.set('Accept', 'application/vnd.github+json')
-    headers.set('X-GitHub-Api-Version', '2022-11-28')
     headers.set('User-Agent', 'vaultbroker')
+
+    if (spec.headers === undefined) {
+      // Legacy GitHub defaults: the one adapter that does not declare its own headers.
+      // Every other adapter sets Accept (and anything else) through `spec.headers`.
+      headers.set('Accept', 'application/vnd.github+json')
+      headers.set('X-GitHub-Api-Version', '2022-11-28')
+    } else {
+      spec.headers(headers)
+    }
 
     const init: RequestInit = { method, headers }
     if (spec.body !== undefined) {
@@ -333,5 +344,11 @@ export async function callApi(
   // 4, 5.
   const stripped = stripForbiddenKeys(parsed)
   const fields = spec.responseFields ?? []
-  return spec.responseIsList === true ? pickEach(stripped, fields) : pick(stripped, fields)
+  if (spec.responseIsList === true) {
+    // Some upstreams wrap their list in an object (`{ "projects": [...] }`); navigate to
+    // it once, here, instead of letting every adapter hand-roll the unwrapping.
+    const list = spec.listPath === undefined ? stripped : pick(stripped, [spec.listPath])[spec.listPath]
+    return pickEach(list, fields)
+  }
+  return pick(stripped, fields)
 }
